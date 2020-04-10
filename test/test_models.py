@@ -42,9 +42,11 @@ def get_available_video_models():
 # before they are compared to the eager model outputs. This is useful if the
 # model outputs are different between TorchScript / Eager mode
 script_test_models = {
+    'deeplabv3_resnet50': {},
     'deeplabv3_resnet101': {},
     'mobilenet_v2': {},
     'resnext50_32x4d': {},
+    'fcn_resnet50': {},
     'fcn_resnet101': {},
     'googlenet': {
         'unwrapper': lambda x: x.logits
@@ -225,6 +227,10 @@ class ModelTester(TestCase):
         self.assertTrue("boxes" in out[0])
         self.assertTrue("scores" in out[0])
         self.assertTrue("labels" in out[0])
+
+    def test_googlenet_eval(self):
+        m = torch.jit.script(models.googlenet(pretrained=True).eval())
+        self.checkModule(m, "googlenet", torch.rand(1, 3, 224, 224))
 
     @unittest.skipIf(not torch.cuda.is_available(), 'needs GPU')
     def test_fasterrcnn_switch_devices(self):

@@ -1,11 +1,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from __future__ import division
-
 import torch
 from torch.jit.annotations import List, Tuple
 from torch import Tensor
 
 
+@torch.jit.script
 class ImageList(object):
     """
     Structure that holds a list of images (of possibly
