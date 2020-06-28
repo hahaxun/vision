@@ -196,12 +196,16 @@ def _onnx_heatmaps_to_keypoints(maps, maps_i, roi_map_width, roi_map_height,
                               xy_preds_i_2.to(dtype=torch.float32)], 0)
 
     # TODO: simplify when indexing without rank will be supported by ONNX
+    base = num_keypoints * num_keypoints + num_keypoints + 1
+    ind = torch.arange(num_keypoints)
+    ind = ind.to(dtype=torch.int64) * base
     end_scores_i = roi_map.index_select(1, y_int.to(dtype=torch.int64)) \
-        .index_select(2, x_int.to(dtype=torch.int64))[:num_keypoints, 0, 0]
+        .index_select(2, x_int.to(dtype=torch.int64)).view(-1).index_select(0, ind.to(dtype=torch.int64))
+
     return xy_preds_i, end_scores_i
 
 
-@torch.jit.script
+@torch.jit._script_if_tracing
 def _onnx_heatmaps_to_keypoints_loop(maps, rois, widths_ceil, heights_ceil,
                                      widths, heights, offset_x, offset_y, num_keypoints):
     xy_preds = torch.zeros((0, 3, int(num_keypoints)), dtype=torch.float32, device=maps.device)
@@ -447,7 +451,7 @@ def _onnx_paste_mask_in_image(mask, box, im_h, im_w):
     return im_mask
 
 
-@torch.jit.script
+@torch.jit._script_if_tracing
 def _onnx_paste_masks_in_image_loop(masks, boxes, im_h, im_w):
     res_append = torch.zeros(0, im_h, im_w)
     for i in range(masks.size(0)):
