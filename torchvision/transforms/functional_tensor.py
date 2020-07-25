@@ -1,5 +1,9 @@
+import warnings
+from typing import Optional
+
 import torch
 from torch import Tensor
+from torch.nn.functional import affine_grid, grid_sample
 from torch.jit.annotations import List, BroadcastingList2
 
 
@@ -8,6 +12,7 @@ def _is_tensor_a_torch_image(x: Tensor) -> bool:
 
 
 def _get_image_size(img: Tensor) -> List[int]:
+    """Returns (w, h) of tensor image"""
     if _is_tensor_a_torch_image(img):
         return [img.shape[-1], img.shape[-2]]
     raise TypeError("Unexpected type {}".format(type(img)))
@@ -191,6 +196,47 @@ def adjust_saturation(img: Tensor, saturation_factor: float) -> Tensor:
         raise TypeError('tensor is not a torch image.')
 
     return _blend(img, rgb_to_grayscale(img), saturation_factor)
+
+
+def adjust_gamma(img: Tensor, gamma: float, gain: float = 1) -> Tensor:
+    r"""Adjust gamma of an RGB image.
+
+    Also known as Power Law Transform. Intensities in RGB mode are adjusted
+    based on the following equation:
+
+    .. math::
+        `I_{\text{out}} = 255 \times \text{gain} \times \left(\frac{I_{\text{in}}}{255}\right)^{\gamma}`
+
+    See `Gamma Correction`_ for more details.
+
+    .. _Gamma Correction: https://en.wikipedia.org/wiki/Gamma_correction
+
+    Args:
+        img (Tensor): Tensor of RBG values to be adjusted.
+        gamma (float): Non negative real number, same as :math:`\gamma` in the equation.
+            gamma larger than 1 make the shadows darker,
+            while gamma smaller than 1 make dark regions lighter.
+        gain (float): The constant multiplier.
+    """
+
+    if not isinstance(img, torch.Tensor):
+        raise TypeError('img should be a Tensor. Got {}'.format(type(img)))
+
+    if gamma < 0:
+        raise ValueError('Gamma should be a non-negative real number')
+
+    result = img
+    dtype = img.dtype
+    if not torch.is_floating_point(img):
+        result = result / 255.0
+
+    result = (gain * result ** gamma).clamp(0, 1)
+
+    if result.dtype != dtype:
+        eps = 1e-3
+        result = (255 + 1.0 - eps) * result
+    result = result.to(dtype)
+    return result
 
 
 def center_crop(img: Tensor, output_size: BroadcastingList2[int]) -> Tensor:
@@ -433,6 +479,7 @@ def pad(img: Tensor, padding: List[int], fill: int = 0, padding_mode: str = "con
 
     if isinstance(padding, int):
         if torch.jit.is_scripting():
+            # This maybe unreachable
             raise ValueError("padding can't be an int while torchscripting, set it as a list [value, ]")
         pad_left = pad_right = pad_top = pad_bottom = padding
     elif len(padding) == 1:
@@ -478,5 +525,155 @@ def pad(img: Tensor, padding: List[int], fill: int = 0, padding_mode: str = "con
 
     if need_cast:
         img = img.to(out_dtype)
+
+    return img
+
+
+def resize(img: Tensor, size: List[int], interpolation: int = 2) -> Tensor:
+    r"""Resize the input Tensor to the given size.
+
+    Args:
+        img (Tensor): Image to be resized.
+        size (int or tuple or list): Desired output size. If size is a sequence like
+            (h, w), the output size will be matched to this. If size is an int,
+            the smaller edge of the image will be matched to this number maintaining
+            the aspect ratio. i.e, if height > width, then image will be rescaled to
+            :math:`\left(\text{size} \times \frac{\text{height}}{\text{width}}, \text{size}\right)`.
+            In torchscript mode padding as a single int is not supported, use a tuple or
+            list of length 1: ``[size, ]``.
+        interpolation (int, optional): Desired interpolation. Default is bilinear (=2). Other supported values:
+            nearest(=0) and bicubic(=3).
+
+    Returns:
+        Tensor: Resized image.
+    """
+    if not _is_tensor_a_torch_image(img):
+        raise TypeError("tensor is not a torch image.")
+
+    if not isinstance(size, (int, tuple, list)):
+        raise TypeError("Got inappropriate size arg")
+    if not isinstance(interpolation, int):
+        raise TypeError("Got inappropriate interpolation arg")
+
+    _interpolation_modes = {
+        0: "nearest",
+        2: "bilinear",
+        3: "bicubic",
+    }
+
+    if interpolation not in _interpolation_modes:
+        raise ValueError("This interpolation mode is unsupported with Tensor input")
+
+    if isinstance(size, tuple):
+        size = list(size)
+
+    if isinstance(size, list) and len(size) not in [1, 2]:
+        raise ValueError("Size must be an int or a 1 or 2 element tuple/list, not a "
+                         "{} element tuple/list".format(len(size)))
+
+    w, h = _get_image_size(img)
+
+    if isinstance(size, int):
+        size_w, size_h = size, size
+    elif len(size) < 2:
+        size_w, size_h = size[0], size[0]
+    else:
+        size_w, size_h = size[1], size[0]  # Convention (h, w)
+
+    if isinstance(size, int) or len(size) < 2:
+        if w < h:
+            size_h = int(size_w * h / w)
+        else:
+            size_w = int(size_h * w / h)
+
+    if (w <= h and w == size_w) or (h <= w and h == size_h):
+        return img
+
+    # make image NCHW
+    need_squeeze = False
+    if img.ndim < 4:
+        img = img.unsqueeze(dim=0)
+        need_squeeze = True
+
+    mode = _interpolation_modes[interpolation]
+
+    out_dtype = img.dtype
+    need_cast = False
+    if img.dtype not in (torch.float32, torch.float64):
+        need_cast = True
+        img = img.to(torch.float32)
+
+    # Define align_corners to avoid warnings
+    align_corners = False if mode in ["bilinear", "bicubic"] else None
+
+    img = torch.nn.functional.interpolate(img, size=(size_h, size_w), mode=mode, align_corners=align_corners)
+
+    if need_squeeze:
+        img = img.squeeze(dim=0)
+
+    if need_cast:
+        if mode == "bicubic":
+            img = img.clamp(min=0, max=255)
+        img = img.to(out_dtype)
+
+    return img
+
+
+def affine(
+        img: Tensor, matrix: List[float], resample: int = 0, fillcolor: Optional[int] = None
+) -> Tensor:
+    """Apply affine transformation on the Tensor image keeping image center invariant.
+
+    Args:
+        img (Tensor): image to be rotated.
+        matrix (list of floats): list of 6 float values representing inverse matrix for affine transformation.
+        resample (int, optional): An optional resampling filter. Default is nearest (=2). Other supported values:
+            bilinear(=2).
+        fillcolor (int, optional): this option is not supported for Tensor input. Fill value for the area outside the
+            transform in the output image is always 0.
+
+    Returns:
+        Tensor: Transformed image.
+    """
+    if not (isinstance(img, torch.Tensor) and _is_tensor_a_torch_image(img)):
+        raise TypeError('img should be Tensor Image. Got {}'.format(type(img)))
+
+    if fillcolor is not None:
+        warnings.warn("Argument fillcolor is not supported for Tensor input. Fill value is zero")
+
+    _interpolation_modes = {
+        0: "nearest",
+        2: "bilinear",
+    }
+
+    if resample not in _interpolation_modes:
+        raise ValueError("This resampling mode is unsupported with Tensor input")
+
+    theta = torch.tensor(matrix, dtype=torch.float).reshape(1, 2, 3)
+    shape = img.shape
+    grid = affine_grid(theta, size=(1, shape[-3], shape[-2], shape[-1]), align_corners=False)
+
+    # make image NCHW
+    need_squeeze = False
+    if img.ndim < 4:
+        img = img.unsqueeze(dim=0)
+        need_squeeze = True
+
+    mode = _interpolation_modes[resample]
+
+    out_dtype = img.dtype
+    need_cast = False
+    if img.dtype not in (torch.float32, torch.float64):
+        need_cast = True
+        img = img.to(torch.float32)
+
+    img = grid_sample(img, grid, mode=mode, padding_mode="zeros", align_corners=False)
+
+    if need_squeeze:
+        img = img.squeeze(dim=0)
+
+    if need_cast:
+        # it is better to round before cast
+        img = torch.round(img).to(out_dtype)
 
     return img
