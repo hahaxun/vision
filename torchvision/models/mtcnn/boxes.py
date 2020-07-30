@@ -61,11 +61,8 @@ def batched_nms(boxes, n, threshold, mode='union'):
         # Select boxes and scores for current item
         boxes_ = boxes[selector, 1:5]
         scores_ = boxes[selector, 5]
-
-        if mode == 'union':
-            keep = box_ops.batched_nms(boxes[:,1:5], boxes[:,5], selector, threshold)
-        else:
-            raise ValueError("mode argument must be either union or min")
+        
+        keep = box_ops.batched_nms(boxes[:,1:5], boxes[:,5], selector, threshold)
 
         # Retain selected boxes for current item
         kept.append(boxes[selector, :][keep, :])

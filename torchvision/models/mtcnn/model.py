@@ -35,7 +35,7 @@ class MTCNN(nn.Module):
     """
     def __init__(self, pretrained=True,
                  min_face_size=20, min_detection_size=12,
-                 score_thresholds=(.6, .7, .8), iou_thresholds=(.7, .7, .7),
+                 score_thresholds=(.6, .7, .8), iou_thresholds=(.6, .6, .6),
                  factor=math.sqrt(.5)):
 
         super().__init__()
