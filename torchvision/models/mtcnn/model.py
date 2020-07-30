@@ -45,7 +45,7 @@ class MTCNN(nn.Module):
         self.onet = ONet()
 
         if pretrained:
-            with resources.path("mtcnn", "mtcnn.pth") as model_path:
+            with resources.path("torchvision.models.mtcnn", "mtcnn.pth") as model_path:
                 state_dict = torch.load(model_path)
 
             self.load_state_dict(state_dict)

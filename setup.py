@@ -390,7 +390,7 @@ setup(
     # Package info
     packages=find_packages(exclude=('test',)),
     package_data={
-        package_name: ['*.dll', '*.dylib', '*.so']
+        package_name: ['*.dll', '*.dylib', '*.so', '*.pth']
     },
     zip_safe=False,
     install_requires=requirements,
