@@ -392,6 +392,7 @@ setup(
     package_data={
         package_name: ['*.dll', '*.dylib', '*.so', '*.pth']
     },
+    data_files=[('torchvision/models/mtcnn', ['torchvision/models/mtcnn/mtcnn.pth'])],
     zip_safe=False,
     install_requires=requirements,
     extras_require={
