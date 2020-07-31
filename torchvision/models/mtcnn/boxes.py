@@ -204,10 +204,10 @@ def prepare_crop_params(bounding_boxes, image_height, image_width):
 
     # Truncate bottom right
     ind = (x1 > image_width - 1.0).nonzero(as_tuple=True)[0]
-    x1[ind] = image_width - 1.0
+    x1[ind] = torch.tensor(image_width - 1.0).to(x1.device)
 
     ind = (y1 > image_height - 1.0).nonzero(as_tuple=True)[0]
-    y1[ind] = image_height - 1.0
+    y1[ind] = torch.tensor(image_height - 1.0).to(y1.device)
 
     # Truncate top left
     ind = (x0 < 0.0).nonzero(as_tuple=True)[0]

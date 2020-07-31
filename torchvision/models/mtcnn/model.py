@@ -165,7 +165,7 @@ class MTCNN(nn.Module):
 
     def forward(self, image):
         n, c, w, h = image.size()
-        min_length = min(h, w)
+        min_length = float(min(h, w))
 
         scales = []
 
