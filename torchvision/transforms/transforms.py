@@ -72,6 +72,12 @@ class ToTensor(object):
     or if the numpy.ndarray has dtype = np.uint8
 
     In the other cases, tensors are returned without scaling.
+
+    .. note::
+        Because the input image is scaled to [0.0, 1.0], this transformation should not be used when
+        transforming target image masks. See the `references`_ for implementing the transforms for image masks.
+
+    .. _references: https://github.com/pytorch/vision/tree/master/references/segmentation
     """
 
     def __call__(self, pic):
@@ -621,66 +627,77 @@ class RandomVerticalFlip(torch.nn.Module):
         return self.__class__.__name__ + '(p={})'.format(self.p)
 
 
-class RandomPerspective(object):
-    """Performs Perspective transformation of the given PIL Image randomly with a given probability.
+class RandomPerspective(torch.nn.Module):
+    """Performs a random perspective transformation of the given image with a given probability.
+    The image can be a PIL Image or a Tensor, in which case it is expected
+    to have [..., H, W] shape, where ... means an arbitrary number of leading dimensions.
 
     Args:
-        interpolation : Default- Image.BICUBIC
+        distortion_scale (float): argument to control the degree of distortion and ranges from 0 to 1.
+            Default is 0.5.
+        p (float): probability of the image being transformed. Default is 0.5.
+        interpolation (int): Interpolation type. If input is Tensor, only ``PIL.Image.NEAREST`` and
+            ``PIL.Image.BILINEAR`` are supported. Default, ``PIL.Image.BILINEAR`` for PIL images and Tensors.
+        fill (n-tuple or int or float): Pixel fill value for area outside the rotated
+            image. If int or float, the value is used for all bands respectively. Default is 0.
+            This option is only available for ``pillow>=5.0.0``. This option is not supported for Tensor
+            input. Fill value for the area outside the transform in the output image is always 0.
 
-        p (float): probability of the image being perspectively transformed. Default value is 0.5
-
-        distortion_scale(float): it controls the degree of distortion and ranges from 0 to 1. Default value is 0.5.
-
-        fill (3-tuple or int): RGB pixel fill value for area outside the rotated image.
-            If int, it is used for all channels respectively. Default value is 0.
     """
 
-    def __init__(self, distortion_scale=0.5, p=0.5, interpolation=Image.BICUBIC, fill=0):
+    def __init__(self, distortion_scale=0.5, p=0.5, interpolation=Image.BILINEAR, fill=0):
+        super().__init__()
         self.p = p
         self.interpolation = interpolation
         self.distortion_scale = distortion_scale
         self.fill = fill
 
-    def __call__(self, img):
+    def forward(self, img):
         """
         Args:
-            img (PIL Image): Image to be Perspectively transformed.
+            img (PIL Image or Tensor): Image to be Perspectively transformed.
 
         Returns:
-            PIL Image: Random perspectivley transformed image.
+            PIL Image or Tensor: Randomly transformed image.
         """
-        if not F._is_pil_image(img):
-            raise TypeError('img should be PIL Image. Got {}'.format(type(img)))
-
-        if random.random() < self.p:
-            width, height = img.size
+        if torch.rand(1) < self.p:
+            width, height = F._get_image_size(img)
             startpoints, endpoints = self.get_params(width, height, self.distortion_scale)
             return F.perspective(img, startpoints, endpoints, self.interpolation, self.fill)
         return img
 
     @staticmethod
-    def get_params(width, height, distortion_scale):
+    def get_params(width: int, height: int, distortion_scale: float) -> Tuple[List[List[int]], List[List[int]]]:
         """Get parameters for ``perspective`` for a random perspective transform.
 
         Args:
-            width : width of the image.
-            height : height of the image.
+            width (int): width of the image.
+            height (int): height of the image.
+            distortion_scale (float): argument to control the degree of distortion and ranges from 0 to 1.
 
         Returns:
             List containing [top-left, top-right, bottom-right, bottom-left] of the original image,
             List containing [top-left, top-right, bottom-right, bottom-left] of the transformed image.
         """
-        half_height = int(height / 2)
-        half_width = int(width / 2)
-        topleft = (random.randint(0, int(distortion_scale * half_width)),
-                   random.randint(0, int(distortion_scale * half_height)))
-        topright = (random.randint(width - int(distortion_scale * half_width) - 1, width - 1),
-                    random.randint(0, int(distortion_scale * half_height)))
-        botright = (random.randint(width - int(distortion_scale * half_width) - 1, width - 1),
-                    random.randint(height - int(distortion_scale * half_height) - 1, height - 1))
-        botleft = (random.randint(0, int(distortion_scale * half_width)),
-                   random.randint(height - int(distortion_scale * half_height) - 1, height - 1))
-        startpoints = [(0, 0), (width - 1, 0), (width - 1, height - 1), (0, height - 1)]
+        half_height = height // 2
+        half_width = width // 2
+        topleft = [
+            int(torch.randint(0, int(distortion_scale * half_width) + 1, size=(1, )).item()),
+            int(torch.randint(0, int(distortion_scale * half_height) + 1, size=(1, )).item())
+        ]
+        topright = [
+            int(torch.randint(width - int(distortion_scale * half_width) - 1, width, size=(1, )).item()),
+            int(torch.randint(0, int(distortion_scale * half_height) + 1, size=(1, )).item())
+        ]
+        botright = [
+            int(torch.randint(width - int(distortion_scale * half_width) - 1, width, size=(1, )).item()),
+            int(torch.randint(height - int(distortion_scale * half_height) - 1, height, size=(1, )).item())
+        ]
+        botleft = [
+            int(torch.randint(0, int(distortion_scale * half_width) + 1, size=(1, )).item()),
+            int(torch.randint(height - int(distortion_scale * half_height) - 1, height, size=(1, )).item())
+        ]
+        startpoints = [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]]
         endpoints = [topleft, topright, botright, botleft]
         return startpoints, endpoints
 
@@ -1096,68 +1113,79 @@ class ColorJitter(torch.nn.Module):
         return format_string
 
 
-class RandomRotation(object):
+class RandomRotation(torch.nn.Module):
     """Rotate the image by angle.
+    The image can be a PIL Image or a Tensor, in which case it is expected
+    to have [..., H, W] shape, where ... means an arbitrary number of leading dimensions.
 
     Args:
         degrees (sequence or float or int): Range of degrees to select from.
             If degrees is a number instead of sequence like (min, max), the range of degrees
             will be (-degrees, +degrees).
-        resample ({PIL.Image.NEAREST, PIL.Image.BILINEAR, PIL.Image.BICUBIC}, optional):
-            An optional resampling filter. See `filters`_ for more information.
+        resample (int, optional): An optional resampling filter. See `filters`_ for more information.
             If omitted, or if the image has mode "1" or "P", it is set to PIL.Image.NEAREST.
+            If input is Tensor, only ``PIL.Image.NEAREST`` and ``PIL.Image.BILINEAR`` are supported.
         expand (bool, optional): Optional expansion flag.
             If true, expands the output to make it large enough to hold the entire rotated image.
             If false or omitted, make the output image the same size as the input image.
             Note that the expand flag assumes rotation around the center and no translation.
-        center (2-tuple, optional): Optional center of rotation.
-            Origin is the upper left corner.
+        center (list or tuple, optional): Optional center of rotation, (x, y). Origin is the upper left corner.
             Default is the center of the image.
         fill (n-tuple or int or float): Pixel fill value for area outside the rotated
             image. If int or float, the value is used for all bands respectively.
-            Defaults to 0 for all bands. This option is only available for ``pillow>=5.2.0``.
+            Defaults to 0 for all bands. This option is only available for Pillow>=5.2.0.
+            This option is not supported for Tensor input. Fill value for the area outside the transform in the output
+            image is always 0.
 
     .. _filters: https://pillow.readthedocs.io/en/latest/handbook/concepts.html#filters
 
     """
 
     def __init__(self, degrees, resample=False, expand=False, center=None, fill=None):
+        super().__init__()
         if isinstance(degrees, numbers.Number):
             if degrees < 0:
                 raise ValueError("If degrees is a single number, it must be positive.")
-            self.degrees = (-degrees, degrees)
+            degrees = [-degrees, degrees]
         else:
+            if not isinstance(degrees, Sequence):
+                raise TypeError("degrees should be a sequence of length 2.")
             if len(degrees) != 2:
                 raise ValueError("If degrees is a sequence, it must be of len 2.")
-            self.degrees = degrees
+
+        self.degrees = [float(d) for d in degrees]
+
+        if center is not None:
+            if not isinstance(center, Sequence):
+                raise TypeError("center should be a sequence of length 2.")
+            if len(center) != 2:
+                raise ValueError("center should be a sequence of length 2.")
+
+        self.center = center
 
         self.resample = resample
         self.expand = expand
-        self.center = center
         self.fill = fill
 
     @staticmethod
-    def get_params(degrees):
+    def get_params(degrees: List[float]) -> float:
         """Get parameters for ``rotate`` for a random rotation.
 
         Returns:
-            sequence: params to be passed to ``rotate`` for random rotation.
+            float: angle parameter to be passed to ``rotate`` for random rotation.
         """
-        angle = random.uniform(degrees[0], degrees[1])
-
+        angle = float(torch.empty(1).uniform_(float(degrees[0]), float(degrees[1])).item())
         return angle
 
-    def __call__(self, img):
+    def forward(self, img):
         """
         Args:
-            img (PIL Image): Image to be rotated.
+            img (PIL Image or Tensor): Image to be rotated.
 
         Returns:
-            PIL Image: Rotated image.
+            PIL Image or Tensor: Rotated image.
         """
-
         angle = self.get_params(self.degrees)
-
         return F.rotate(img, angle, self.resample, self.expand, self.center, self.fill)
 
     def __repr__(self):

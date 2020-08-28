@@ -1,23 +1,17 @@
 import torch
 from torchvision import transforms as T
 from torchvision.transforms import functional as F
-from PIL import Image
+
 from PIL.Image import NEAREST, BILINEAR, BICUBIC
 
 import numpy as np
 
 import unittest
 
+from common_utils import TransformsTester
 
-class Tester(unittest.TestCase):
-    def _create_data(self, height=3, width=3, channels=3):
-        tensor = torch.randint(0, 255, (channels, height, width), dtype=torch.uint8)
-        pil_img = Image.fromarray(tensor.permute(1, 2, 0).contiguous().numpy())
-        return tensor, pil_img
 
-    def compareTensorToPIL(self, tensor, pil_image):
-        pil_tensor = torch.as_tensor(np.array(pil_image).transpose((2, 0, 1)))
-        self.assertTrue(tensor.equal(pil_tensor))
+class Tester(TransformsTester):
 
     def _test_functional_geom_op(self, func, fn_kwargs):
         if fn_kwargs is None:
@@ -226,7 +220,7 @@ class Tester(unittest.TestCase):
             if dt is not None:
                 # This is a trivial cast to float of uint8 data to test all cases
                 tensor = tensor.to(dt)
-            for size in [32, [32, ], [32, 32], (32, 32), ]:
+            for size in [32, 34, [32, ], [32, 32], (32, 32), [34, 35]]:
                 for interpolation in [BILINEAR, BICUBIC, NEAREST]:
 
                     resized_tensor = F.resize(tensor, size=size, interpolation=interpolation)
@@ -250,7 +244,7 @@ class Tester(unittest.TestCase):
 
         for scale in [(0.7, 1.2), [0.7, 1.2]]:
             for ratio in [(0.75, 1.333), [0.75, 1.333]]:
-                for size in [(32, ), [32, ], [32, 32], (32, 32)]:
+                for size in [(32, ), [44, ], [32, ], [32, 32], (32, 32), [44, 55]]:
                     for interpolation in [NEAREST, BILINEAR, BICUBIC]:
                         transform = T.RandomResizedCrop(
                             size=size, scale=scale, ratio=ratio, interpolation=interpolation
@@ -282,6 +276,41 @@ class Tester(unittest.TestCase):
                             torch.manual_seed(12)
                             out2 = s_transform(tensor)
                             self.assertTrue(out1.equal(out2))
+
+    def test_random_rotate(self):
+        tensor = torch.randint(0, 255, size=(3, 44, 56), dtype=torch.uint8)
+
+        for center in [(0, 0), [10, 10], None, (56, 44)]:
+            for expand in [True, False]:
+                for degrees in [45, 35.0, (-45, 45), [-90.0, 90.0]]:
+                    for interpolation in [NEAREST, BILINEAR]:
+                        transform = T.RandomRotation(
+                            degrees=degrees, resample=interpolation, expand=expand, center=center
+                        )
+                        s_transform = torch.jit.script(transform)
+
+                        torch.manual_seed(12)
+                        out1 = transform(tensor)
+                        torch.manual_seed(12)
+                        out2 = s_transform(tensor)
+                        self.assertTrue(out1.equal(out2))
+
+    def test_random_perspective(self):
+        tensor = torch.randint(0, 255, size=(3, 44, 56), dtype=torch.uint8)
+
+        for distortion_scale in np.linspace(0.1, 1.0, num=20):
+            for interpolation in [NEAREST, BILINEAR]:
+                transform = T.RandomPerspective(
+                    distortion_scale=distortion_scale,
+                    interpolation=interpolation
+                )
+                s_transform = torch.jit.script(transform)
+
+                torch.manual_seed(12)
+                out1 = transform(tensor)
+                torch.manual_seed(12)
+                out2 = s_transform(tensor)
+                self.assertTrue(out1.equal(out2))
 
 
 if __name__ == '__main__':
