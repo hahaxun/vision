@@ -12,17 +12,10 @@ using namespace ffmpeg;
 // If we are in a Windows environment, we need to define
 // initialization functions for the _custom_ops extension
 #ifdef _WIN32
-#if PY_MAJOR_VERSION < 3
-PyMODINIT_FUNC init_video_reader(void) {
-  // No need to do anything.
-  return NULL;
-}
-#else
 PyMODINIT_FUNC PyInit_video_reader(void) {
   // No need to do anything.
   return NULL;
 }
-#endif
 #endif
 
 namespace video_reader {
@@ -668,12 +661,9 @@ torch::List<torch::Tensor> probeVideoFromFile(std::string videoPath) {
 
 } // namespace video_reader
 
-static auto registry = torch::RegisterOperators()
-                           .op("video_reader::read_video_from_memory",
-                               &video_reader::readVideoFromMemory)
-                           .op("video_reader::read_video_from_file",
-                               &video_reader::readVideoFromFile)
-                           .op("video_reader::probe_video_from_memory",
-                               &video_reader::probeVideoFromMemory)
-                           .op("video_reader::probe_video_from_file",
-                               &video_reader::probeVideoFromFile);
+TORCH_LIBRARY_FRAGMENT(video_reader, m) {
+  m.def("read_video_from_memory", video_reader::readVideoFromMemory);
+  m.def("read_video_from_file", video_reader::readVideoFromFile);
+  m.def("probe_video_from_memory", video_reader::probeVideoFromMemory);
+  m.def("probe_video_from_file", video_reader::probeVideoFromFile);
+}
