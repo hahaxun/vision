@@ -2,14 +2,16 @@ import os
 import torch
 from torchvision import transforms as T
 from torchvision.transforms import functional as F
-
-from PIL.Image import NEAREST, BILINEAR, BICUBIC
+from torchvision.transforms import InterpolationMode
 
 import numpy as np
 
 import unittest
 
 from common_utils import TransformsTester, get_tmp_dir, int_dtypes, float_dtypes
+
+
+NEAREST, BILINEAR, BICUBIC = InterpolationMode.NEAREST, InterpolationMode.BILINEAR, InterpolationMode.BICUBIC
 
 
 class Tester(TransformsTester):
@@ -111,13 +113,13 @@ class Tester(TransformsTester):
         for f in [0.2, 0.5, (-0.2, 0.3), [-0.4, 0.5]]:
             meth_kwargs = {"hue": f}
             self._test_class_op(
-                "ColorJitter", meth_kwargs=meth_kwargs, test_exact_match=False, tol=0.1, agg_method="mean"
+                "ColorJitter", meth_kwargs=meth_kwargs, test_exact_match=False, tol=16.1, agg_method="max"
             )
 
         # All 4 parameters together
         meth_kwargs = {"brightness": 0.2, "contrast": 0.2, "saturation": 0.2, "hue": 0.2}
         self._test_class_op(
-            "ColorJitter", meth_kwargs=meth_kwargs, test_exact_match=False, tol=0.1, agg_method="mean"
+            "ColorJitter", meth_kwargs=meth_kwargs, test_exact_match=False, tol=12.1, agg_method="max"
         )
 
     def test_pad(self):
@@ -347,14 +349,15 @@ class Tester(TransformsTester):
                 for translate in [(0.1, 0.2), [0.2, 0.1]]:
                     for degrees in [45, 35.0, (-45, 45), [-90.0, 90.0]]:
                         for interpolation in [NEAREST, BILINEAR]:
-                            transform = T.RandomAffine(
-                                degrees=degrees, translate=translate,
-                                scale=scale, shear=shear, resample=interpolation
-                            )
-                            s_transform = torch.jit.script(transform)
+                            for fill in [85, (10, -10, 10), 0.7, [0.0, 0.0, 0.0], [1, ], 1]:
+                                transform = T.RandomAffine(
+                                    degrees=degrees, translate=translate,
+                                    scale=scale, shear=shear, interpolation=interpolation, fill=fill
+                                )
+                                s_transform = torch.jit.script(transform)
 
-                            self._test_transform_vs_scripted(transform, s_transform, tensor)
-                            self._test_transform_vs_scripted_on_batch(transform, s_transform, batch_tensors)
+                                self._test_transform_vs_scripted(transform, s_transform, tensor)
+                                self._test_transform_vs_scripted_on_batch(transform, s_transform, batch_tensors)
 
         with get_tmp_dir() as tmp_dir:
             s_transform.save(os.path.join(tmp_dir, "t_random_affine.pt"))
@@ -367,13 +370,14 @@ class Tester(TransformsTester):
             for expand in [True, False]:
                 for degrees in [45, 35.0, (-45, 45), [-90.0, 90.0]]:
                     for interpolation in [NEAREST, BILINEAR]:
-                        transform = T.RandomRotation(
-                            degrees=degrees, resample=interpolation, expand=expand, center=center
-                        )
-                        s_transform = torch.jit.script(transform)
+                        for fill in [85, (10, -10, 10), 0.7, [0.0, 0.0, 0.0], [1, ], 1]:
+                            transform = T.RandomRotation(
+                                degrees=degrees, interpolation=interpolation, expand=expand, center=center, fill=fill
+                            )
+                            s_transform = torch.jit.script(transform)
 
-                        self._test_transform_vs_scripted(transform, s_transform, tensor)
-                        self._test_transform_vs_scripted_on_batch(transform, s_transform, batch_tensors)
+                            self._test_transform_vs_scripted(transform, s_transform, tensor)
+                            self._test_transform_vs_scripted_on_batch(transform, s_transform, batch_tensors)
 
         with get_tmp_dir() as tmp_dir:
             s_transform.save(os.path.join(tmp_dir, "t_random_rotate.pt"))
@@ -384,14 +388,16 @@ class Tester(TransformsTester):
 
         for distortion_scale in np.linspace(0.1, 1.0, num=20):
             for interpolation in [NEAREST, BILINEAR]:
-                transform = T.RandomPerspective(
-                    distortion_scale=distortion_scale,
-                    interpolation=interpolation
-                )
-                s_transform = torch.jit.script(transform)
+                for fill in [85, (10, -10, 10), 0.7, [0.0, 0.0, 0.0], [1, ], 1]:
+                    transform = T.RandomPerspective(
+                        distortion_scale=distortion_scale,
+                        interpolation=interpolation,
+                        fill=fill
+                    )
+                    s_transform = torch.jit.script(transform)
 
-                self._test_transform_vs_scripted(transform, s_transform, tensor)
-                self._test_transform_vs_scripted_on_batch(transform, s_transform, batch_tensors)
+                    self._test_transform_vs_scripted(transform, s_transform, tensor)
+                    self._test_transform_vs_scripted_on_batch(transform, s_transform, batch_tensors)
 
         with get_tmp_dir() as tmp_dir:
             s_transform.save(os.path.join(tmp_dir, "t_perspective.pt"))
@@ -446,6 +452,7 @@ class Tester(TransformsTester):
         # We skip some tests from _test_transform_vs_scripted_on_batch as
         # results for scripted and non-scripted transformations are not exactly the same
         torch.manual_seed(12)
+        torch.set_deterministic(True)
         transformed_batch = fn(batch_tensors)
         torch.manual_seed(12)
         s_transformed_batch = scripted_fn(batch_tensors)
