@@ -414,7 +414,7 @@ if __name__ == "__main__":
         # Package info
         packages=find_packages(exclude=('test',)),
         package_data={
-            package_name: ['*.dll', '*.dylib', '*.so', '*.pth']
+            package_name: ['*.dll', '*.dylib', '*.so']
         },
         zip_safe=False,
         install_requires=requirements,
